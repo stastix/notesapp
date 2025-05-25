@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import {
   Authenticator,
   Button,
@@ -13,77 +13,71 @@ import {
 } from "@aws-amplify/ui-react";
 import { Amplify } from "aws-amplify";
 import "@aws-amplify/ui-react/styles.css";
-import { getUrl } from "aws-amplify/storage";
-import { uploadData } from "aws-amplify/storage";
+import { getUrl, uploadData } from "aws-amplify/storage";
 import { generateClient } from "aws-amplify/data";
 import outputs from "../amplify_outputs.json";
-/**
- * @type {import('aws-amplify/data').Client<import('../amplify/data/resource').Schema>}
- */
+import type { Schema } from "../amplify/data/resource";
 
 Amplify.configure(outputs);
-const client = generateClient({
+
+const client = generateClient<Schema>({
   authMode: "userPool",
 });
 
+type Note = Schema["Note"]["type"];
+
 export default function App() {
-  const [notes, setNotes] = useState([]);
+  const [notes, setNotes] = useState<Note[]>([]);
 
   useEffect(() => {
     fetchNotes();
   }, []);
 
   async function fetchNotes() {
-    const { data: notes } = await client.models.Note.list();
-    await Promise.all(
-      notes.map(async (note) => {
+    const { data: notesData } = await client.models.Note.list();
+    const updatedNotes = await Promise.all(
+      notesData.map(async (note) => {
         if (note.image) {
-          const linkToStorageFile = await getUrl({
+          const { url } = await getUrl({
             path: ({ identityId }) => `media/${identityId}/${note.image}`,
           });
-          console.log(linkToStorageFile.url);
-          note.image = linkToStorageFile.url;
+          note.image = url;
         }
         return note;
       })
     );
-    console.log(notes);
-    setNotes(notes);
+    setNotes(updatedNotes);
   }
 
-  async function createNote(event) {
+  async function createNote(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.target);
-    console.log(form.get("image").name);
+    const form = new FormData(event.currentTarget);
+    const file = form.get("image") as File | null;
+
+    if (!file) return;
+
+    const name = form.get("name") as string;
+    const description = form.get("description") as string;
 
     const { data: newNote } = await client.models.Note.create({
-      name: form.get("name"),
-      description: form.get("description"),
-      image: form.get("image").name,
+      name,
+      description,
+      image: file.name,
     });
 
-    console.log(newNote);
-    if (newNote.image)
-      if (newNote.image)
-        await uploadData({
-          path: ({ identityId }) => `media/${identityId}/${newNote.image}`,
-
-          data: form.get("image"),
-        }).result;
+    if (newNote?.image) {
+      await uploadData({
+        path: ({ identityId }) => `media/${identityId}/${newNote.image}`,
+        data: file,
+      }).result;
+    }
 
     fetchNotes();
-    event.target.reset();
+    event.currentTarget.reset();
   }
 
-  async function deleteNote({ id }) {
-    const toBeDeletedNote = {
-      id: id,
-    };
-
-    const { data: deletedNote } =
-      await client.models.Note.delete(toBeDeletedNote);
-    console.log(deletedNote);
-
+  async function deleteNote(note: Pick<Note, "id">) {
+    await client.models.Note.delete({ id: note.id });
     fetchNotes();
   }
 
@@ -99,6 +93,7 @@ export default function App() {
           margin="0 auto"
         >
           <Heading level={1}>My Notes App</Heading>
+
           <View as="form" margin="3rem 0" onSubmit={createNote}>
             <Flex
               direction="column"
@@ -123,20 +118,21 @@ export default function App() {
                 required
               />
               <View
-                name="image"
                 as="input"
                 type="file"
-                alignSelf={"end"}
+                name="image"
+                alignSelf="end"
                 accept="image/png, image/jpeg"
               />
-
               <Button type="submit" variation="primary">
                 Create Note
               </Button>
             </Flex>
           </View>
+
           <Divider />
           <Heading level={2}>Current Notes</Heading>
+
           <Grid
             margin="3rem 0"
             autoFlow="column"
@@ -157,13 +153,13 @@ export default function App() {
                 className="box"
               >
                 <View>
-                  <Heading level="3">{note.name}</Heading>
+                  <Heading level={3}>{note.name}</Heading>
                 </View>
                 <Text fontStyle="italic">{note.description}</Text>
                 {note.image && (
                   <Image
                     src={note.image}
-                    alt={`visual aid for ${notes.name}`}
+                    alt={`visual aid for ${note.name}`}
                     style={{ width: 400 }}
                   />
                 )}
@@ -176,6 +172,7 @@ export default function App() {
               </Flex>
             ))}
           </Grid>
+
           <Button onClick={signOut}>Sign Out</Button>
         </Flex>
       )}
